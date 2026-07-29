@@ -1,0 +1,22 @@
+[project]
+name = "mojo-tiktoken"
+version = "0.1.0"
+description = "tiktoken-compatible byte-pair encoding with Mojo kernels"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Lee Penkman", email = "leepenkman@gmail.com" }]
+dependencies = ["numpy", "regex"]
+
+[project.optional-dependencies]
+dev = ["pytest", "tiktoken"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+
+[tool.setuptools.packages.find]
+where = ["python"]
