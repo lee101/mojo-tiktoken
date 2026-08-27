@@ -64,7 +64,7 @@ def lib() -> ctypes.CDLL:
         decode_offsets.argtypes = [I] * 6
         decode_offsets.restype = I
         decode_into = _library.mtk_decode_into
-        decode_into.argtypes = [I] * 8
+        decode_into.argtypes = [I] * 7
         decode_into.restype = None
     return _library
 

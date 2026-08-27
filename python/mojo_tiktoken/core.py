@@ -12,8 +12,7 @@ from ._lib import addr, lib
 
 SpecialArgument = Literal["all"] | AbstractSet[str]
 DisallowedArgument = Literal["all"] | Collection[str]
-_BATCH_PARALLEL_MIN_BYTES = 1_048_576
-_DECODE_PARALLEL_MIN_TOKENS = 16_384
+_BATCH_PARALLEL_MIN_BYTES = 8_388_608
 _MAX_NATIVE_TOKEN = np.iinfo(np.uint32).max
 
 
@@ -216,6 +215,37 @@ class Encoding:
             num_threads=num_threads,
         )
 
+    def _encode_document_texts(
+        self, texts: list[str], *, num_threads: int
+    ) -> list[list[int]]:
+        if num_threads < 1:
+            raise ValueError("num_threads must be at least 1")
+        documents = [self._pretokenize(text) for text in texts]
+
+        piece_count = sum(len(offsets) - 1 for _, offsets in documents)
+        piece_offsets = np.empty(piece_count + 1, dtype=np.int64)
+        document_pieces = np.empty(len(documents) + 1, dtype=np.int64)
+        piece_offsets[0] = 0
+        document_pieces[0] = 0
+        byte_start = 0
+        piece_start = 0
+        data_chunks = []
+        for index, (data, offsets) in enumerate(documents):
+            data_chunks.append(data)
+            count = len(offsets) - 1
+            piece_offsets[piece_start + 1 : piece_start + count + 1] = (
+                offsets[1:] + byte_start
+            )
+            byte_start += len(data)
+            piece_start += count
+            document_pieces[index + 1] = piece_start
+        return self._encode_packed_documents(
+            b"".join(data_chunks),
+            piece_offsets,
+            document_pieces,
+            num_threads=num_threads,
+        )
+
     def _encode_packed_documents(
         self,
         data_bytes: bytes,
@@ -392,17 +422,7 @@ class Encoding:
         )
 
     def encode_ordinary_batch(self, text: list[str], *, num_threads: int = 8) -> list[list[int]]:
-        pieces: list[bytes] = []
-        document_piece_offsets = [0]
-        for document in text:
-            if document:
-                pieces.extend(self._pretokenize_pieces(document))
-            document_piece_offsets.append(len(pieces))
-        return self._encode_piece_documents(
-            pieces,
-            document_piece_offsets,
-            num_threads=num_threads,
-        )
+        return self._encode_document_texts(text, num_threads=num_threads)
 
     def encode_batch(
         self,
@@ -455,11 +475,15 @@ class Encoding:
             return b""
         if self._decode_bytes is None:
             return b"".join(map(self._decoder.__getitem__, tokens))
-        token_array = np.fromiter(
-            (operator.index(token) for token in tokens),
-            dtype=np.int64,
-            count=len(tokens),
-        )
+        token_array = np.asarray(tokens)
+        if token_array.ndim != 1 or token_array.dtype.kind not in "iu":
+            token_array = np.fromiter(
+                (operator.index(token) for token in tokens),
+                dtype=np.int64,
+                count=len(tokens),
+            )
+        elif token_array.dtype != np.int64 or not token_array.flags.c_contiguous:
+            token_array = np.ascontiguousarray(token_array, dtype=np.int64)
         output_offsets = np.empty(len(token_array) + 1, dtype=np.int64)
         decoded_length = lib().mtk_decode_offsets(
             addr(token_array),
@@ -484,7 +508,6 @@ class Encoding:
                 addr(self._decode_lengths),
                 addr(output_offsets),
                 addr(decoded),
-                _DECODE_PARALLEL_MIN_TOKENS,
             )
         return decoded.tobytes()
 

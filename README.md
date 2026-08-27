@@ -77,12 +77,20 @@ value below 1 means mojo-tiktoken is slower.
 
 | case | mojo-tiktoken | tiktoken | upstream / Mojo |
 | --- | ---: | ---: | ---: |
-| cl100k English encode (0.85 MB) | 113.84 ms | 76.64 ms | 0.67x |
-| cl100k source encode (0.76 MB) | 233.77 ms | 147.08 ms | 0.63x |
-| o200k multilingual encode (0.73 MB) | 121.86 ms | 41.10 ms | 0.34x |
-| cl100k batch encode (256 documents) | 93.75 ms | 18.10 ms | 0.19x |
-| cl100k single-piece BPE (62 KB) | 16.93 ms | 17.82 ms | 1.05x |
-| cl100k decode (148k tokens) | 19.08 ms | 3.58 ms | 0.19x |
+| cl100k English encode (0.85 MB) | 113.78 ms | 78.67 ms | 0.69x |
+| cl100k source encode (0.76 MB) | 204.78 ms | 130.92 ms | 0.64x |
+| o200k multilingual encode (0.73 MB) | 108.10 ms | 37.52 ms | 0.35x |
+| cl100k batch encode (256 documents) | 58.08 ms | 15.49 ms | 0.27x |
+| cl100k single-piece BPE (62 KB) | 16.33 ms | 16.59 ms | 1.02x |
+| cl100k decode (148k tokens) | 8.36 ms | 3.55 ms | 0.43x |
+
+Against the baseline measured in the same optimization session, batch encode
+improved from 79.39 ms to 58.08 ms, decode from 12.92 ms to 8.36 ms, and
+multilingual encode from 112.26 ms to 108.10 ms. English encode (113.15 ms to
+113.78 ms), source encode (199.63 ms to 204.78 ms), and isolated BPE (15.85 ms
+to 16.33 ms) regressed slightly. Those paths were retained because the isolated
+BPE result remains at parity and the end-to-end encode timings are dominated by
+unchanged regex pre-tokenization.
 
 The isolated BPE workload remains ahead. End-to-end encode, batch, and decode
 remain slower because upstream combines regex, BPE, and result construction in
@@ -125,10 +133,12 @@ across the ABI. Token output is written as `uint32`, allowing
 `encode_to_numpy` to return the native output view without conversion.
 
 Decode uses a dense token-to-byte table when token IDs are reasonably dense.
-Its byte-copy loop uses SIMD with a scalar remainder, and large token streams
-are divided into independent chunks with a serial threshold to avoid thread
-launch overhead. Large multi-document encodes use the same thresholded
-parallel strategy with per-document scratch regions.
+Its byte-copy loop uses SIMD with a scalar remainder, and BPE scratch arrays are
+initialized with SIMD plus a scalar tail. Decode stays serial because measured
+thread-launch overhead exceeded the gain even at 1.2 million tokens. Independent
+multi-document encodes use `parallelize` above an 8 MiB threshold with
+per-document scratch regions; smaller batches stay serial. Batch packing keeps
+one UTF-8 buffer per document instead of allocating one for every regex piece.
 
 ## Verification
 

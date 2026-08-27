@@ -134,6 +134,13 @@ def test_random_raw_byte_piece_parity(cl100k):
         assert ours._encode_single_piece(data) == theirs._encode_single_piece(data)
 
 
+def test_bpe_scratch_simd_tail(cl100k):
+    ours, theirs = cl100k
+    data = b"vector-tail-17byt"
+    assert len(data) == 17
+    assert ours._encode_single_piece(data) == theirs._encode_single_piece(data)
+
+
 def test_random_unicode_parity(o200k):
     ours, theirs = o200k
     random_source = random.Random(42)
@@ -241,10 +248,10 @@ def test_decode_simd_tail(cl100k):
     assert ours.decode_bytes(tokens) == b"hello world!"
 
 
-def test_decode_parallel_threshold(cl100k):
+def test_decode_large_stream(cl100k):
     ours, _ = cl100k
     token = ours.encode_single_token(b"a")
-    count = mojo_core._DECODE_PARALLEL_MIN_TOKENS + 17
+    count = 16_401
     assert ours.decode_bytes([token] * count) == b"a" * count
 
 

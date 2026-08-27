@@ -1,3 +1,5 @@
+from max.algorithm import parallelize
+from std.math import iota
 from std.sys.info import simd_width_of as simdwidthof
 
 
@@ -190,7 +192,15 @@ def encode_piece(
         return count + 1
 
     var length = piece_end - piece_start
-    for local in range(length):
+    comptime W = simdwidthof[DType.float64]()
+    var local = 0
+    while local + W < length:
+        var nodes = iota[DType.int32, W](Int32(local))
+        next_node.unsafe_store(local, nodes + 1)
+        previous_node.unsafe_store(local, nodes - 1)
+        generation.unsafe_store(local, SIMD[DType.int32, W](0))
+        local += W
+    while local < length:
         next_node[unsafe_offset=local] = Int32(
             local + 1 if local + 1 < length else -1
         )
@@ -198,6 +208,7 @@ def encode_piece(
             local - 1 if local > 0 else -1
         )
         generation[unsafe_offset=local] = 0
+        local += 1
 
     var heap_size = 0
     for local in range(length - 1):
@@ -425,20 +436,9 @@ def mtk_encode_pieces(
         and document_count > 1
         and data_length >= parallel_threshold
     ):
-        var worker_count = min(num_threads, document_count)
-        var documents_per_worker = (
-            document_count + worker_count - 1
-        ) // worker_count
-
-        @__parameter
-        def encode_chunk(worker: Int):
-            var first = worker * documents_per_worker
-            var last = min(first + documents_per_worker, document_count)
-            for document in range(first, last):
-                encode_one(document)
-
-        for worker in range(worker_count):
-            encode_chunk(worker)
+        parallelize[encode_one](
+            document_count, min(num_threads, document_count)
+        )
     else:
         for document in range(document_count):
             encode_one(document)
@@ -514,7 +514,6 @@ def mtk_decode_into(
     decode_lengths_addr: Int,
     output_offsets_addr: Int,
     decoded_addr: Int,
-    parallel_threshold: Int,
 ) abi("C"):
     var tokens = I64Ptr(unsafe_from_address=tokens_addr)
     var decode_data = BPtr(unsafe_from_address=decode_data_addr)
@@ -522,36 +521,13 @@ def mtk_decode_into(
     var decode_lengths = I32Ptr(unsafe_from_address=decode_lengths_addr)
     var output_offsets = I64Ptr(unsafe_from_address=output_offsets_addr)
     var decoded = BPtr(unsafe_from_address=decoded_addr)
-    if token_count < parallel_threshold:
-        copy_decoded_tokens(
-            0,
-            token_count,
-            tokens,
-            decode_data,
-            decode_starts,
-            decode_lengths,
-            output_offsets,
-            decoded,
-        )
-        return
-
-    var chunk_size = 4096
-    var chunk_count = (token_count + chunk_size - 1) // chunk_size
-
-    @__parameter
-    def copy_chunk(chunk: Int):
-        var first = chunk * chunk_size
-        var last = min(first + chunk_size, token_count)
-        copy_decoded_tokens(
-            first,
-            last,
-            tokens,
-            decode_data,
-            decode_starts,
-            decode_lengths,
-            output_offsets,
-            decoded,
-        )
-
-    for chunk in range(chunk_count):
-        copy_chunk(chunk)
+    copy_decoded_tokens(
+        0,
+        token_count,
+        tokens,
+        decode_data,
+        decode_starts,
+        decode_lengths,
+        output_offsets,
+        decoded,
+    )
