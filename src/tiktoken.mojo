@@ -1,11 +1,10 @@
-from std.algorithm import parallelize
 from std.sys.info import simd_width_of as simdwidthof
 
 
-comptime BPtr = UnsafePointer[UInt8, AnyOrigin[mut=True]]
-comptime I32Ptr = UnsafePointer[Int32, AnyOrigin[mut=True]]
-comptime U32Ptr = UnsafePointer[UInt32, AnyOrigin[mut=True]]
-comptime I64Ptr = UnsafePointer[Int64, AnyOrigin[mut=True]]
+comptime BPtr = Pointer[UInt8, AnyOrigin[mut=True]]
+comptime I32Ptr = Pointer[Int32, AnyOrigin[mut=True]]
+comptime U32Ptr = Pointer[UInt32, AnyOrigin[mut=True]]
+comptime I64Ptr = Pointer[Int64, AnyOrigin[mut=True]]
 
 
 def lookup_rank(
@@ -20,22 +19,27 @@ def lookup_rank(
 ) -> Int:
     var hash_value = UInt64(14695981039346656037)
     for i in range(start, end):
-        hash_value = (hash_value ^ UInt64(data[i])) * UInt64(1099511628211)
+        hash_value = (hash_value ^ UInt64(data[unsafe_offset=i])) * UInt64(
+            1099511628211
+        )
     var slot = Int(hash_value & UInt64(mask))
     while True:
-        var entry = Int(slots[slot])
+        var entry = Int(slots[unsafe_offset=slot])
         if entry < 0:
             return -1
-        var key_start = Int(key_offsets[entry])
-        var key_end = Int(key_offsets[entry + 1])
+        var key_start = Int(key_offsets[unsafe_offset=entry])
+        var key_end = Int(key_offsets[unsafe_offset=entry + 1])
         if key_end - key_start == end - start:
             var equal = True
             for i in range(end - start):
-                if keys[key_start + i] != data[start + i]:
+                if (
+                    keys[unsafe_offset=key_start + i]
+                    != data[unsafe_offset=start + i]
+                ):
                     equal = False
                     break
             if equal:
-                return Int(key_ranks[entry])
+                return Int(key_ranks[unsafe_offset=entry])
         slot = (slot + 1) & mask
 
 
@@ -55,46 +59,62 @@ def heap_push(
     var pos = size
     while pos > 0:
         var parent = (pos - 1) // 2
-        var parent_rank = Int(heap_rank[parent])
-        var parent_left = Int(heap_left[parent])
+        var parent_rank = Int(heap_rank[unsafe_offset=parent])
+        var parent_left = Int(heap_left[unsafe_offset=parent])
         if not heap_less(rank, left, parent_rank, parent_left):
             break
-        heap_left[pos] = heap_left[parent]
-        heap_generation[pos] = heap_generation[parent]
-        heap_rank[pos] = heap_rank[parent]
+        heap_left[unsafe_offset=pos] = heap_left[unsafe_offset=parent]
+        heap_generation[unsafe_offset=pos] = heap_generation[
+            unsafe_offset=parent
+        ]
+        heap_rank[unsafe_offset=pos] = heap_rank[unsafe_offset=parent]
         pos = parent
-    heap_left[pos] = Int32(left)
-    heap_generation[pos] = Int32(generation)
-    heap_rank[pos] = Int64(rank)
+    heap_left[unsafe_offset=pos] = Int32(left)
+    heap_generation[unsafe_offset=pos] = Int32(generation)
+    heap_rank[unsafe_offset=pos] = Int64(rank)
     return size + 1
 
 
-def heap_pop(heap_left: I32Ptr, heap_generation: I32Ptr, heap_rank: I64Ptr, size: Int) -> Int:
+def heap_pop(
+    heap_left: I32Ptr, heap_generation: I32Ptr, heap_rank: I64Ptr, size: Int
+) -> Int:
     var new_size = size - 1
     if new_size == 0:
         return 0
-    var last_left = Int(heap_left[new_size])
-    var last_generation = heap_generation[new_size]
-    var last_rank = Int(heap_rank[new_size])
+    var last_left = Int(heap_left[unsafe_offset=new_size])
+    var last_generation = heap_generation[unsafe_offset=new_size]
+    var last_rank = Int(heap_rank[unsafe_offset=new_size])
     var pos = 0
     while True:
         var child = pos * 2 + 1
         if child >= new_size:
             break
         if child + 1 < new_size:
-            var right_rank = Int(heap_rank[child + 1])
-            var right_left = Int(heap_left[child + 1])
-            if heap_less(right_rank, right_left, Int(heap_rank[child]), Int(heap_left[child])):
+            var right_rank = Int(heap_rank[unsafe_offset=child + 1])
+            var right_left = Int(heap_left[unsafe_offset=child + 1])
+            if heap_less(
+                right_rank,
+                right_left,
+                Int(heap_rank[unsafe_offset=child]),
+                Int(heap_left[unsafe_offset=child]),
+            ):
                 child += 1
-        if not heap_less(Int(heap_rank[child]), Int(heap_left[child]), last_rank, last_left):
+        if not heap_less(
+            Int(heap_rank[unsafe_offset=child]),
+            Int(heap_left[unsafe_offset=child]),
+            last_rank,
+            last_left,
+        ):
             break
-        heap_left[pos] = heap_left[child]
-        heap_generation[pos] = heap_generation[child]
-        heap_rank[pos] = heap_rank[child]
+        heap_left[unsafe_offset=pos] = heap_left[unsafe_offset=child]
+        heap_generation[unsafe_offset=pos] = heap_generation[
+            unsafe_offset=child
+        ]
+        heap_rank[unsafe_offset=pos] = heap_rank[unsafe_offset=child]
         pos = child
-    heap_left[pos] = Int32(last_left)
-    heap_generation[pos] = last_generation
-    heap_rank[pos] = Int64(last_rank)
+    heap_left[unsafe_offset=pos] = Int32(last_left)
+    heap_generation[unsafe_offset=pos] = last_generation
+    heap_rank[unsafe_offset=pos] = Int64(last_rank)
     return new_size
 
 
@@ -115,19 +135,26 @@ def push_pair(
     piece_start: Int,
     piece_length: Int,
 ) -> Int:
-    var right = Int(next_node[left])
+    var right = Int(next_node[unsafe_offset=left])
     if right < 0:
         return heap_size
-    var after = Int(next_node[right])
+    var after = Int(next_node[unsafe_offset=right])
     var end = after if after >= 0 else piece_length
     var rank = lookup_rank(
-        data, piece_start + left, piece_start + end, keys, key_offsets, key_ranks, slots, mask
+        data,
+        piece_start + left,
+        piece_start + end,
+        keys,
+        key_offsets,
+        key_ranks,
+        slots,
+        mask,
     )
     if rank < 0:
         return heap_size
     return heap_push(
         left,
-        Int(generation[left]),
+        Int(generation[unsafe_offset=left]),
         rank,
         heap_left,
         heap_generation,
@@ -159,14 +186,18 @@ def encode_piece(
         data, piece_start, piece_end, keys, key_offsets, key_ranks, slots, mask
     )
     if direct >= 0:
-        tokens[count] = UInt32(direct)
+        tokens[unsafe_offset=count] = UInt32(direct)
         return count + 1
 
     var length = piece_end - piece_start
     for local in range(length):
-        next_node[local] = Int32(local + 1 if local + 1 < length else -1)
-        previous_node[local] = Int32(local - 1 if local > 0 else -1)
-        generation[local] = 0
+        next_node[unsafe_offset=local] = Int32(
+            local + 1 if local + 1 < length else -1
+        )
+        previous_node[unsafe_offset=local] = Int32(
+            local - 1 if local > 0 else -1
+        )
+        generation[unsafe_offset=local] = 0
 
     var heap_size = 0
     for local in range(length - 1):
@@ -189,23 +220,23 @@ def encode_piece(
         )
 
     while heap_size > 0:
-        var left = Int(heap_left[0])
-        var version = Int(heap_generation[0])
+        var left = Int(heap_left[unsafe_offset=0])
+        var version = Int(heap_generation[unsafe_offset=0])
         heap_size = heap_pop(heap_left, heap_generation, heap_rank, heap_size)
-        if version != Int(generation[left]):
+        if version != Int(generation[unsafe_offset=left]):
             continue
-        var right = Int(next_node[left])
+        var right = Int(next_node[unsafe_offset=left])
         if right < 0:
             continue
-        var after = Int(next_node[right])
-        next_node[left] = Int32(after)
-        generation[left] += 1
-        generation[right] += 1
+        var after = Int(next_node[unsafe_offset=right])
+        next_node[unsafe_offset=left] = Int32(after)
+        generation[unsafe_offset=left] += 1
+        generation[unsafe_offset=right] += 1
         if after >= 0:
-            previous_node[after] = Int32(left)
-        var before = Int(previous_node[left])
+            previous_node[unsafe_offset=after] = Int32(left)
+        var before = Int(previous_node[unsafe_offset=left])
         if before >= 0:
-            generation[before] += 1
+            generation[unsafe_offset=before] += 1
             heap_size = push_pair(
                 before,
                 data,
@@ -244,12 +275,19 @@ def encode_piece(
 
     var node = 0
     while node >= 0:
-        var after = Int(next_node[node])
+        var after = Int(next_node[unsafe_offset=node])
         var end = after if after >= 0 else length
         var rank = lookup_rank(
-            data, piece_start + node, piece_start + end, keys, key_offsets, key_ranks, slots, mask
+            data,
+            piece_start + node,
+            piece_start + end,
+            keys,
+            key_offsets,
+            key_ranks,
+            slots,
+            mask,
         )
-        tokens[count] = UInt32(rank)
+        tokens[unsafe_offset=count] = UInt32(rank)
         count += 1
         node = after
     return count
@@ -274,14 +312,14 @@ def encode_document(
     heap_rank: I64Ptr,
     scratch_offsets: I64Ptr,
 ) -> Int:
-    var first_piece = Int(document_piece_offsets[document])
-    var last_piece = Int(document_piece_offsets[document + 1])
-    var token_start = Int(piece_offsets[first_piece])
+    var first_piece = Int(document_piece_offsets[unsafe_offset=document])
+    var last_piece = Int(document_piece_offsets[unsafe_offset=document + 1])
+    var token_start = Int(piece_offsets[unsafe_offset=first_piece])
     var token_count = token_start
-    var scratch_start = Int(scratch_offsets[document])
+    var scratch_start = Int(scratch_offsets[unsafe_offset=document])
     for piece in range(first_piece, last_piece):
-        var start = Int(piece_offsets[piece])
-        var end = Int(piece_offsets[piece + 1])
+        var start = Int(piece_offsets[unsafe_offset=piece])
+        var end = Int(piece_offsets[unsafe_offset=piece + 1])
         if end > start:
             token_count = encode_piece(
                 data,
@@ -294,12 +332,12 @@ def encode_document(
                 mask,
                 tokens,
                 token_count,
-                next_node + scratch_start,
-                previous_node + scratch_start,
-                generation + scratch_start,
-                heap_left + 3 * scratch_start,
-                heap_generation + 3 * scratch_start,
-                heap_rank + 3 * scratch_start,
+                next_node.unsafe_offset(scratch_start),
+                previous_node.unsafe_offset(scratch_start),
+                generation.unsafe_offset(scratch_start),
+                heap_left.unsafe_offset(3 * scratch_start),
+                heap_generation.unsafe_offset(3 * scratch_start),
+                heap_rank.unsafe_offset(3 * scratch_start),
             )
     return token_count - token_start
 
@@ -331,9 +369,15 @@ def mtk_encode_pieces(
 ) abi("C") -> Int:
     var data = BPtr(unsafe_from_address=data_addr)
     var piece_offsets = I64Ptr(unsafe_from_address=piece_offsets_addr)
-    var document_piece_offsets = I64Ptr(unsafe_from_address=document_piece_offsets_addr)
-    var document_token_starts = I64Ptr(unsafe_from_address=document_token_starts_addr)
-    var document_token_counts = I64Ptr(unsafe_from_address=document_token_counts_addr)
+    var document_piece_offsets = I64Ptr(
+        unsafe_from_address=document_piece_offsets_addr
+    )
+    var document_token_starts = I64Ptr(
+        unsafe_from_address=document_token_starts_addr
+    )
+    var document_token_counts = I64Ptr(
+        unsafe_from_address=document_token_counts_addr
+    )
     var scratch_offsets = I64Ptr(unsafe_from_address=scratch_offsets_addr)
     var keys = BPtr(unsafe_from_address=keys_addr)
     var key_offsets = I64Ptr(unsafe_from_address=key_offsets_addr)
@@ -347,11 +391,13 @@ def mtk_encode_pieces(
     var heap_generation = I32Ptr(unsafe_from_address=heap_generation_addr)
     var heap_rank = I64Ptr(unsafe_from_address=heap_rank_addr)
 
-    @parameter
+    @__parameter
     def encode_one(document: Int):
-        var first_piece = Int(document_piece_offsets[document])
-        document_token_starts[document] = piece_offsets[first_piece]
-        document_token_counts[document] = Int64(
+        var first_piece = Int(document_piece_offsets[unsafe_offset=document])
+        document_token_starts[unsafe_offset=document] = piece_offsets[
+            unsafe_offset=first_piece
+        ]
+        document_token_counts[unsafe_offset=document] = Int64(
             encode_document(
                 document,
                 data,
@@ -373,26 +419,33 @@ def mtk_encode_pieces(
             )
         )
 
-    var data_length = Int(piece_offsets[piece_count])
-    if num_threads > 1 and document_count > 1 and data_length >= parallel_threshold:
+    var data_length = Int(piece_offsets[unsafe_offset=piece_count])
+    if (
+        num_threads > 1
+        and document_count > 1
+        and data_length >= parallel_threshold
+    ):
         var worker_count = min(num_threads, document_count)
-        var documents_per_worker = (document_count + worker_count - 1) // worker_count
+        var documents_per_worker = (
+            document_count + worker_count - 1
+        ) // worker_count
 
-        @parameter
+        @__parameter
         def encode_chunk(worker: Int):
             var first = worker * documents_per_worker
             var last = min(first + documents_per_worker, document_count)
             for document in range(first, last):
                 encode_one(document)
 
-        parallelize[encode_chunk](worker_count, worker_count)
+        for worker in range(worker_count):
+            encode_chunk(worker)
     else:
         for document in range(document_count):
             encode_one(document)
 
     var total = 0
     for document in range(document_count):
-        total += Int(document_token_counts[document])
+        total += Int(document_token_counts[unsafe_offset=document])
     return total
 
 
@@ -410,13 +463,17 @@ def mtk_decode_offsets(
     var decode_lengths = I32Ptr(unsafe_from_address=decode_lengths_addr)
     var output_offsets = I64Ptr(unsafe_from_address=output_offsets_addr)
     var total = 0
-    output_offsets[0] = 0
+    output_offsets[unsafe_offset=0] = 0
     for i in range(token_count):
-        var token = Int(tokens[i])
-        if token < 0 or token >= decode_table_size or decode_starts[token] < 0:
+        var token = Int(tokens[unsafe_offset=i])
+        if (
+            token < 0
+            or token >= decode_table_size
+            or decode_starts[unsafe_offset=token] < 0
+        ):
             return -1
-        total += Int(decode_lengths[token])
-        output_offsets[i + 1] = Int64(total)
+        total += Int(decode_lengths[unsafe_offset=token])
+        output_offsets[unsafe_offset=i + 1] = Int64(total)
     return total
 
 
@@ -432,17 +489,19 @@ def copy_decoded_tokens(
 ):
     comptime W = simdwidthof[DType.float64]()
     for i in range(first, last):
-        var token = Int(tokens[i])
-        var source_start = Int(decode_starts[token])
-        var length = Int(decode_lengths[token])
-        var destination_start = Int(output_offsets[i])
+        var token = Int(tokens[unsafe_offset=i])
+        var source_start = Int(decode_starts[unsafe_offset=token])
+        var length = Int(decode_lengths[unsafe_offset=token])
+        var destination_start = Int(output_offsets[unsafe_offset=i])
         var offset = 0
         while offset + W <= length:
-            var value = decode_data.load[width=W](source_start + offset)
-            decoded.store(destination_start + offset, value)
+            var value = decode_data.unsafe_load[width=W](source_start + offset)
+            decoded.unsafe_store(destination_start + offset, value)
             offset += W
         while offset < length:
-            decoded[destination_start + offset] = decode_data[source_start + offset]
+            decoded[unsafe_offset=destination_start + offset] = decode_data[
+                unsafe_offset=source_start + offset
+            ]
             offset += 1
 
 
@@ -479,7 +538,7 @@ def mtk_decode_into(
     var chunk_size = 4096
     var chunk_count = (token_count + chunk_size - 1) // chunk_size
 
-    @parameter
+    @__parameter
     def copy_chunk(chunk: Int):
         var first = chunk * chunk_size
         var last = min(first + chunk_size, token_count)
@@ -494,4 +553,5 @@ def mtk_decode_into(
             decoded,
         )
 
-    parallelize[copy_chunk](chunk_count, min(chunk_count, 8))
+    for chunk in range(chunk_count):
+        copy_chunk(chunk)
