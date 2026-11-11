@@ -58,7 +58,7 @@ def lib() -> ctypes.CDLL:
     if _library is None:
         _library = ctypes.CDLL(build())
         encode = _library.mtk_encode_pieces
-        encode.argtypes = [I] * 22
+        encode.argtypes = [I] * 21
         encode.restype = I
         decode_offsets = _library.mtk_decode_offsets
         decode_offsets.argtypes = [I] * 6

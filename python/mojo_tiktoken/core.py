@@ -313,31 +313,46 @@ class Encoding:
         heap_rank = np.empty(heap_size, dtype=np.int64)
         document_token_starts = np.empty(document_count, dtype=np.int64)
         document_token_counts = np.empty(document_count, dtype=np.int64)
+        parts = min(num_threads, document_count)
+        bounds = [
+            (
+                document_count * part // parts,
+                document_count * (part + 1) // parts,
+            )
+            for part in range(parts)
+        ]
 
-        count = lib().mtk_encode_pieces(
-            addr(data),
-            addr(piece_offsets),
-            len(piece_offsets) - 1,
-            addr(document_pieces),
-            document_count,
-            addr(document_token_starts),
-            addr(document_token_counts),
-            addr(scratch_offsets),
-            addr(self._key_bytes),
-            addr(self._key_offsets),
-            addr(self._key_ranks),
-            addr(self._slots),
-            self._slot_mask,
-            addr(tokens),
-            addr(next_node),
-            addr(previous_node),
-            addr(generation),
-            addr(heap_left),
-            addr(heap_generation),
-            addr(heap_rank),
-            num_threads,
-            _BATCH_PARALLEL_MIN_BYTES,
-        )
+        def encode_documents(bound):
+            start, stop = bound
+            return lib().mtk_encode_pieces(
+                addr(data),
+                addr(piece_offsets),
+                addr(document_pieces),
+                document_count,
+                addr(document_token_starts),
+                addr(document_token_counts),
+                addr(scratch_offsets),
+                addr(self._key_bytes),
+                addr(self._key_offsets),
+                addr(self._key_ranks),
+                addr(self._slots),
+                self._slot_mask,
+                addr(tokens),
+                addr(next_node),
+                addr(previous_node),
+                addr(generation),
+                addr(heap_left),
+                addr(heap_generation),
+                addr(heap_rank),
+                start,
+                stop,
+            )
+
+        if parts > 1 and len(data_bytes) >= _BATCH_PARALLEL_MIN_BYTES:
+            with ThreadPoolExecutor(parts) as executor:
+                count = sum(executor.map(encode_documents, bounds))
+        else:
+            count = encode_documents((0, document_count))
         if count < 0 or count > len(tokens):
             raise RuntimeError(f"Mojo encoder returned invalid token count {count}")
         if np.any(document_token_starts < 0) or np.any(document_token_counts < 0):

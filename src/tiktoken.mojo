@@ -1,4 +1,3 @@
-from max.algorithm import parallelize
 from std.math import iota
 from std.sys.info import simd_width_of as simdwidthof
 
@@ -357,7 +356,6 @@ def encode_document(
 def mtk_encode_pieces(
     data_addr: Int,
     piece_offsets_addr: Int,
-    piece_count: Int,
     document_piece_offsets_addr: Int,
     document_count: Int,
     document_token_starts_addr: Int,
@@ -375,8 +373,8 @@ def mtk_encode_pieces(
     heap_left_addr: Int,
     heap_generation_addr: Int,
     heap_rank_addr: Int,
-    num_threads: Int,
-    parallel_threshold: Int,
+    document_start: Int,
+    document_stop: Int,
 ) abi("C") -> Int:
     var data = BPtr(unsafe_from_address=data_addr)
     var piece_offsets = I64Ptr(unsafe_from_address=piece_offsets_addr)
@@ -430,21 +428,9 @@ def mtk_encode_pieces(
             )
         )
 
-    var data_length = Int(piece_offsets[unsafe_offset=piece_count])
-    if (
-        num_threads > 1
-        and document_count > 1
-        and data_length >= parallel_threshold
-    ):
-        parallelize[encode_one](
-            document_count, min(num_threads, document_count)
-        )
-    else:
-        for document in range(document_count):
-            encode_one(document)
-
     var total = 0
-    for document in range(document_count):
+    for document in range(document_start, document_stop):
+        encode_one(document)
         total += Int(document_token_counts[unsafe_offset=document])
     return total
 
